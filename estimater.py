@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+#| 主算法实现 | FoundationPose 类的实现，核心位姿估计逻辑 |
 
 from Utils import *
 from datareader import *

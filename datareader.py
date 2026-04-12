@@ -5,7 +5,7 @@
 # and any modifications thereto.  Any use, reproduction, disclosure or
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
-
+# | 数据读取 | 支持 7 个 BOP 标准数据集的读取器 |
 
 from Utils import *
 import json,os,sys

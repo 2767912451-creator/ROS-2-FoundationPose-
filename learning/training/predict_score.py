@@ -214,7 +214,6 @@ class ScorePredictor:
     scores = scores_global
 
     logging.info(f'forward done')
-    torch.cuda.empty_cache()
 
     if get_vis:
       logging.info("get_vis...")

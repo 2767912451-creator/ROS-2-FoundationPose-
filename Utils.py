@@ -5,7 +5,9 @@
 # and any modifications thereto.  Any use, reproduction, disclosure or
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
-
+#----------------------------------------------------------------------------------------------------------
+#核心工具库
+#----------------------------------------------------------------------------------------------------------
 
 import os, sys, time,torch,pickle,trimesh,itertools,pdb,zipfile,datetime,imageio,gzip,logging,joblib,importlib,uuid,signal,multiprocessing,psutil,subprocess,tarfile,scipy,argparse
 from pytorch3d.transforms import so3_log_map,so3_exp_map,se3_exp_map,se3_log_map,matrix_to_axis_angle,matrix_to_euler_angles,euler_angles_to_matrix, rotation_6d_to_matrix
@@ -691,18 +693,9 @@ def draw_xyz_axis(color, ob_in_cam, scale=0.1, K=np.eye(3), thickness=3, transpa
   line_type = cv2.LINE_AA
   arrow_len = 0
   tmp = color.copy()
-  tmp1 = tmp.copy()
-  tmp1 = cv2.arrowedLine(tmp1, origin, xx, color=(0,0,255), thickness=thickness,line_type=line_type, tipLength=arrow_len)
-  mask = np.linalg.norm(tmp1-tmp, axis=-1)>0
-  tmp[mask] = tmp[mask]*transparency + tmp1[mask]*(1-transparency)
-  tmp1 = tmp.copy()
-  tmp1 = cv2.arrowedLine(tmp1, origin, yy, color=(0,255,0), thickness=thickness,line_type=line_type, tipLength=arrow_len)
-  mask = np.linalg.norm(tmp1-tmp, axis=-1)>0
-  tmp[mask] = tmp[mask]*transparency + tmp1[mask]*(1-transparency)
-  tmp1 = tmp.copy()
-  tmp1 = cv2.arrowedLine(tmp1, origin, zz, color=(255,0,0), thickness=thickness,line_type=line_type, tipLength=arrow_len)
-  mask = np.linalg.norm(tmp1-tmp, axis=-1)>0
-  tmp[mask] = tmp[mask]*transparency + tmp1[mask]*(1-transparency)
+  tmp = cv2.arrowedLine(tmp, origin, xx, color=(0,0,255), thickness=thickness, line_type=line_type, tipLength=arrow_len)
+  tmp = cv2.arrowedLine(tmp, origin, yy, color=(0,255,0), thickness=thickness, line_type=line_type, tipLength=arrow_len)
+  tmp = cv2.arrowedLine(tmp, origin, zz, color=(255,0,0), thickness=thickness, line_type=line_type, tipLength=arrow_len)
   tmp = tmp.astype(np.uint8)
   if is_input_rgb:
     tmp = cv2.cvtColor(tmp,cv2.COLOR_BGR2RGB)
