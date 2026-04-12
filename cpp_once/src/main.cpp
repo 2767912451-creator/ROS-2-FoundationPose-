@@ -4,8 +4,11 @@
 //       FoundationPose register → 返回位姿
 //
 // 编译：colcon build --packages-select pose_once
-// 运行：ros2 run pose_once pose_once --ros-args -p mesh_file:=/path/to/mesh.obj -p onnx_file:=/path/to/cpp_once/models/best.onnx
-// 触发：ros2 service call /trigger_pose_estimation pose_once/srv/TriggerPoseEstimation "{}"
+// 运行：./run.sh --ros-args -p mesh_file:=/home/ckh/vscode/FoundationPose/demo_data/水杯.obj
+
+// 触发：source /opt/ros/humble/setup.bash
+// source /home/ckh/vscode/FoundationPose/cpp_once/install/setup.bash
+// /home/ckh/vscode/FoundationPose/cpp_once/install/pose_once/lib/pose_once/client_example
 // ==============================================================================
 
 #include "yolo_seg.hpp"
@@ -16,6 +19,7 @@
 #include "pose_once/srv/trigger_pose_estimation.hpp"
 
 #include <Python.h>
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 
 #include <opencv2/opencv.hpp>
@@ -136,10 +140,14 @@ public:
 
         // ── 初始化 Python ──────────────────────────────────────────────────────
         RCLCPP_INFO(this->get_logger(), "初始化 Python 环境...");
+        Py_SetPythonHome(Py_DecodeLocale("/home/ckh/anaconda3/envs/foundationpose", nullptr));
         Py_Initialize();
-        import_array();
+        if (_import_array() < 0) {
+            PyErr_Print();
+            throw std::runtime_error("Failed to initialize NumPy C API");
+        }
 
-        std::string proj_root = fs::absolute("..").string();
+        std::string proj_root = "/home/ckh/vscode/FoundationPose";
         PyRun_SimpleString(("import sys; sys.path.insert(0, '" + proj_root + "')").c_str());
 
         PyObject* py_module = PyImport_ImportModule("estimater");
@@ -250,6 +258,13 @@ private:
             // 深度转换
             cv::Mat depth_f32;
             fp.depth_raw.convertTo(depth_f32, CV_32FC1, depth_scale_);
+
+            // 打印 mask 区域深度均值，辅助诊断距离偏差
+            cv::Mat mask_roi;
+            depth_f32.copyTo(mask_roi, best.mask);
+            cv::Scalar mean_depth = cv::mean(depth_f32, best.mask);
+            int mask_pixels = cv::countNonZero(best.mask);
+            RCLCPP_INFO(this->get_logger(), "mask像素数=%d, mask区域深度均值=%.3fm", mask_pixels, mean_depth[0]);
 
             // FoundationPose register
             cv::Mat pose = callFoundationPoseRegister(

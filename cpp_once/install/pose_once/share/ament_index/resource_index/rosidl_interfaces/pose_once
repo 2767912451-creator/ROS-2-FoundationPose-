@@ -1,0 +1,4 @@
+srv/TriggerPoseEstimation.idl
+srv/TriggerPoseEstimation.srv
+srv/TriggerPoseEstimation_Request.msg
+srv/TriggerPoseEstimation_Response.msg

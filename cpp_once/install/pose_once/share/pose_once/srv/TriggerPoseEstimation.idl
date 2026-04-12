@@ -1,0 +1,20 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from pose_once/srv/TriggerPoseEstimation.srv
+// generated code does not contain a copyright notice
+
+
+module pose_once {
+  module srv {
+    struct TriggerPoseEstimation_Request {
+      uint8 structure_needs_at_least_one_member;
+    };
+    typedef double double__16[16];
+    struct TriggerPoseEstimation_Response {
+      double__16 pose;
+
+      boolean success;
+
+      string message;
+    };
+  };
+};

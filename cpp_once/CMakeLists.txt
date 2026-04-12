@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.18)
-project(pose_once CXX)
+project(pose_once C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Release)
 
 # ── 依赖路径 ──────────────────────────────────────────────────────────────────
-set(ORT_DIR "/home/ckh/Downloads/YOLOs-CPP/onnxruntime-linux-x64-gpu-1.16.3")//onnxruntime安装目录
-set(CONDA_ENV "/home/ckh/anaconda3/envs/foundationpose")//canda环境根目录
-set(PYTHON_VER "3.9")//python版本号
+set(ORT_DIR "/home/ckh/Downloads/YOLOs-CPP/onnxruntime-linux-x64-gpu-1.16.3") # onnxruntime安装目录
+set(CONDA_ENV "/home/ckh/anaconda3/envs/foundationpose") # conda环境根目录
+set(PYTHON_VER "3.9") # python版本号
 
 # ── ROS 2 ─────────────────────────────────────────────────────────────────────
 find_package(ament_cmake REQUIRED)
@@ -15,10 +15,10 @@ find_package(rclcpp REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 # ── OpenCV ────────────────────────────────────────────────────────────────────
-find_package(OpenCV REQUIRED)//查找opencv库
+find_package(OpenCV REQUIRED) # 查找opencv库
 
 # ── RealSense ─────────────────────────────────────────────────────────────────
-find_package(realsense2 REQUIRED)//查找intel realsense2 SDK
+find_package(realsense2 REQUIRED) # 查找intel realsense2 SDK
 
 # ── ONNX Runtime ──────────────────────────────────────────────────────────────
 set(ORT_INCLUDE "${ORT_DIR}/include")
@@ -35,7 +35,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 
 # ── 目标 ──────────────────────────────────────────────────────────────────────
-add_executable(pose_once
+add_executable(pose_once_node
     src/main.cpp
     src/yolo_seg.cpp
     src/realsense_cam.cpp
@@ -46,7 +46,7 @@ add_executable(client_example
     src/client_example.cpp
 )
 
-target_include_directories(pose_once PRIVATE
+target_include_directories(pose_once_node PRIVATE
     include
     ${OpenCV_INCLUDE_DIRS}
     ${ORT_INCLUDE}
@@ -54,30 +54,39 @@ target_include_directories(pose_once PRIVATE
     ${NUMPY_INCLUDE}
 )
 
-target_link_libraries(pose_once PRIVATE
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
+target_link_libraries(pose_once_node PRIVATE
     ${OpenCV_LIBS}
     rclcpp::rclcpp
     realsense2
     ${ORT_LIB}
     ${PYTHON_LIB}
+    ${cpp_typesupport_target}
 )
 
 target_link_libraries(client_example PRIVATE
     rclcpp::rclcpp
-)
-
-rosidl_target_interfaces(pose_once
-    ${PROJECT_NAME} "rosidl_typesupport_cpp"
-)
-
-rosidl_target_interfaces(client_example
-    ${PROJECT_NAME} "rosidl_typesupport_cpp"
+    ${cpp_typesupport_target}
 )
 
 # ONNX Runtime 的 CUDA provider 运行时需要能找到 so
-set_target_properties(pose_once PROPERTIES
-    BUILD_RPATH "${ORT_DIR}/lib"
-    INSTALL_RPATH "${ORT_DIR}/lib"
+# RPATH 只加 ORT 和 Python，不加整个 conda lib 目录
+set_target_properties(pose_once_node PROPERTIES
+    BUILD_RPATH "${ORT_DIR}/lib:${CONDA_ENV}/lib"
+    INSTALL_RPATH "${ORT_DIR}/lib:${CONDA_ENV}/lib"
+    BUILD_RPATH_USE_ORIGIN ON
+)
+
+# 链接时优先使用系统 libstdc++ / libgcc_s，避免 conda 版本污染 ROS 2
+target_link_options(pose_once_node PRIVATE
+    -Wl,-rpath-link,/usr/lib/x86_64-linux-gnu
+    -Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2
+)
+
+# ── 安装 ──────────────────────────────────────────────────────────────────────
+install(TARGETS pose_once_node client_example
+    DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_package()
