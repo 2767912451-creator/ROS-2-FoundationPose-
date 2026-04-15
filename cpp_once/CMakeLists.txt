@@ -13,6 +13,9 @@ set(PYTHON_VER "3.9") # python版本号
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 # ── OpenCV ────────────────────────────────────────────────────────────────────
 find_package(OpenCV REQUIRED) # 查找opencv库
@@ -63,6 +66,12 @@ target_link_libraries(pose_once_node PRIVATE
     ${ORT_LIB}
     ${PYTHON_LIB}
     ${cpp_typesupport_target}
+)
+
+ament_target_dependencies(pose_once_node PUBLIC
+    geometry_msgs
+    tf2_ros
+    tf2_geometry_msgs
 )
 
 target_link_libraries(client_example PRIVATE

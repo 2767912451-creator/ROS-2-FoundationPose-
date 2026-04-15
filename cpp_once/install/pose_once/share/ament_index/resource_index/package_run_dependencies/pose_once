@@ -1,1 +1,1 @@
-rclcpp;opencv;realsense2;rosidl_default_runtime
+rclcpp;opencv;realsense2;geometry_msgs;tf2_ros;tf2_geometry_msgs;rosidl_default_runtime

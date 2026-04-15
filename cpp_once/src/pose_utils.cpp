@@ -1,10 +1,10 @@
 #include "pose_utils.hpp"
-#include <cmath>
-#include <ctime>
-#include <iomanip>
-#include <sstream>
+#include <cmath>//数学函数
+#include <ctime>//时间函数
+#include <iomanip>//格式化输出
+#include <sstream>//哟字符串六，用于拼接文件名字符串
 #include <iostream>
-#include <sys/stat.h>
+#include <sys/stat.h>//linux系统调用，mkdir创建目录，确保results文件夹存在
 
 // ── 旋转矩阵 → 欧拉角 RPY (rad，xyz顺序) ────────────────────────────────────
 static cv::Vec3d rotMatToRPY(const cv::Mat& R)
@@ -59,7 +59,7 @@ static cv::Vec4d rotMatToQuat(const cv::Mat& R)
     return {qx, qy, qz, qw};  // xyzw
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 打印输出欧拉角和四元数─────────────────────────────────────────────────────────────────────────────
 void printPose(const Pose4x4& pose)
 {
     cv::Mat t = pose(cv::Rect(3, 0, 1, 3));   // 3x1
@@ -88,7 +88,7 @@ void printPose(const Pose4x4& pose)
     std::cout << "==============================\n\n";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 在保存图片上显示rpy，xyzw─────────────────────────────────────────────────────────────────────────────
 void drawPoseText(cv::Mat& img_bgr, const Pose4x4& pose)
 {
     cv::Mat t = pose(cv::Rect(3, 0, 1, 3));
@@ -116,7 +116,7 @@ void drawPoseText(cv::Mat& img_bgr, const Pose4x4& pose)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 图片保存到results─────────────────────────────────────────────────────────────────────────────
 std::string savePoseImage(const cv::Mat& vis_bgr, const std::string& results_dir)
 {
     // 确保目录存在
@@ -130,4 +130,36 @@ std::string savePoseImage(const cv::Mat& vis_bgr, const std::string& results_dir
     std::string path = ss.str();
     cv::imwrite(path, vis_bgr);
     return path;
+}
+
+// 绘制物体坐标系三轴────────────────────────────────────────────────────────────
+void drawAxes(cv::Mat& img_bgr, const Pose4x4& pose, const cv::Mat& K, double axis_len)
+{
+    // 物体坐标系原点和三轴端点（物体坐标系下）
+    cv::Mat pts(4, 3, CV_64F);
+    pts.row(0) = (cv::Mat_<double>(1,3) << 0, 0, 0);           // 原点
+    pts.row(1) = (cv::Mat_<double>(1,3) << axis_len, 0, 0);    // X 轴 红
+    pts.row(2) = (cv::Mat_<double>(1,3) << 0, axis_len, 0);    // Y 轴 绿
+    pts.row(3) = (cv::Mat_<double>(1,3) << 0, 0, axis_len);    // Z 轴 蓝
+
+    cv::Mat R = pose(cv::Rect(0, 0, 3, 3));
+    cv::Mat t = pose(cv::Rect(3, 0, 1, 3));
+    double fx = K.at<double>(0,0), fy = K.at<double>(1,1);
+    double cx = K.at<double>(0,2), cy = K.at<double>(1,2);
+
+    // 将每个点变换到相机坐标系再投影
+    auto project = [&](int i) -> cv::Point {
+        cv::Mat p = R * pts.row(i).t() + t;  // 3x1
+        double x = p.at<double>(0), y = p.at<double>(1), z = p.at<double>(2);
+        return {(int)(fx * x / z + cx), (int)(fy * y / z + cy)};
+    };
+
+    cv::Point o  = project(0);
+    cv::Point px = project(1);
+    cv::Point py = project(2);
+    cv::Point pz = project(3);
+
+    cv::arrowedLine(img_bgr, o, px, {0,   0,   255}, 2, cv::LINE_AA, 0, 0.2); // X 红
+    cv::arrowedLine(img_bgr, o, py, {0,   255, 0  }, 2, cv::LINE_AA, 0, 0.2); // Y 绿
+    cv::arrowedLine(img_bgr, o, pz, {255, 0,   0  }, 2, cv::LINE_AA, 0, 0.2); // Z 蓝
 }

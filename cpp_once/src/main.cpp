@@ -17,6 +17,10 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include "pose_once/srv/trigger_pose_estimation.hpp"
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
@@ -109,6 +113,12 @@ private:
 
     // 服务端
     rclcpp::Service<pose_once::srv::TriggerPoseEstimation>::SharedPtr service_;
+    // 位姿发布
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr grasp_pub_;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    std::string camera_frame_;
+    std::string target_frame_;
 
 public:
     PoseEstimationNode() : Node("pose_estimation_node"), py_est_(nullptr) {
@@ -121,6 +131,8 @@ public:
         this->declare_parameter("width", 640);
         this->declare_parameter("height", 480);
         this->declare_parameter("fps", 30);
+        this->declare_parameter("camera_frame", "camera_color_optical_frame");
+        this->declare_parameter("target_frame", "base_link");
 
         // 获取参数
         std::string mesh_file = this->get_parameter("mesh_file").as_string();
@@ -131,6 +143,14 @@ public:
         int width = this->get_parameter("width").as_int();
         int height = this->get_parameter("height").as_int();
         int fps = this->get_parameter("fps").as_int();
+        camera_frame_ = this->get_parameter("camera_frame").as_string();
+        target_frame_ = this->get_parameter("target_frame").as_string();
+
+        // 初始化 publisher 和 tf2
+        grasp_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+            "/detect/grasp_pose", 10);
+        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         fs::create_directories(results_dir_);
         fs::create_directories(debug_dir_);
@@ -282,11 +302,79 @@ private:
             response->success = true;
             response->message = "位姿估计成功";
 
+            // ── 构建并发布 /detect/grasp_pose ─────────────────────────────────
+            // 从 4x4 矩阵提取位置和旋转（相机坐标系）
+            double tx = pose.at<double>(0,3);
+            double ty = pose.at<double>(1,3);
+            double tz = pose.at<double>(2,3);
+
+            // Z轴 = 杯子中轴线（obj Z轴，旋转矩阵第三列）
+            double zx = pose.at<double>(0,2), zy = pose.at<double>(1,2), zz = pose.at<double>(2,2);
+            double zn = std::sqrt(zx*zx + zy*zy + zz*zz);
+            zx /= zn; zy /= zn; zz /= zn;
+
+            // 参考方向：相机坐标系下的 Y 轴向上，用于叉积得到 X 轴
+            double ux = 0.0, uy = -1.0, uz = 0.0;
+            // X轴 = 参考方向 × Z轴，归一化
+            double xx = uy*zz - uz*zy, xy = uz*zx - ux*zz, xz = ux*zy - uy*zx;
+            double xn = std::sqrt(xx*xx + xy*xy + xz*xz);
+            if (xn < 1e-6) { ux = 1.0; uy = 0.0; uz = 0.0;
+                xx = uy*zz - uz*zy; xy = uz*zx - ux*zz; xz = ux*zy - uy*zx;
+                xn = std::sqrt(xx*xx + xy*xy + xz*xz); }
+            xx /= xn; xy /= xn; xz /= xn;
+            // Y轴 = Z × X
+            double yx = zy*xz - zz*xy, yy = zz*xx - zx*xz, yz = zx*xy - zy*xx;
+
+            // 旋转矩阵 → 四元数
+            double R[3][3] = {{xx,yx,zx},{xy,yy,zy},{xz,yz,zz}};
+            double trace = R[0][0]+R[1][1]+R[2][2];
+            double qw,qx,qy,qz;
+            if (trace > 0) {
+                double s = 0.5/std::sqrt(trace+1.0);
+                qw=0.25/s; qx=(R[2][1]-R[1][2])*s; qy=(R[0][2]-R[2][0])*s; qz=(R[1][0]-R[0][1])*s;
+            } else if (R[0][0]>R[1][1] && R[0][0]>R[2][2]) {
+                double s=2.0*std::sqrt(1.0+R[0][0]-R[1][1]-R[2][2]);
+                qw=(R[2][1]-R[1][2])/s; qx=0.25*s; qy=(R[0][1]+R[1][0])/s; qz=(R[0][2]+R[2][0])/s;
+            } else if (R[1][1]>R[2][2]) {
+                double s=2.0*std::sqrt(1.0+R[1][1]-R[0][0]-R[2][2]);
+                qw=(R[0][2]-R[2][0])/s; qx=(R[0][1]+R[1][0])/s; qy=0.25*s; qz=(R[1][2]+R[2][1])/s;
+            } else {
+                double s=2.0*std::sqrt(1.0+R[2][2]-R[0][0]-R[1][1]);
+                qw=(R[1][0]-R[0][1])/s; qx=(R[0][2]+R[2][0])/s; qy=(R[1][2]+R[2][1])/s; qz=0.25*s;
+            }
+
+            // 构建相机坐标系下的 PoseStamped
+            geometry_msgs::msg::PoseStamped pose_cam;
+            pose_cam.header.stamp = this->now();
+            pose_cam.header.frame_id = camera_frame_;
+            pose_cam.pose.position.x = tx;
+            pose_cam.pose.position.y = ty;
+            pose_cam.pose.position.z = tz;
+            pose_cam.pose.orientation.w = qw;
+            pose_cam.pose.orientation.x = qx;
+            pose_cam.pose.orientation.y = qy;
+            pose_cam.pose.orientation.z = qz;
+
+            // tf2 变换到 target_frame
+            try {
+                geometry_msgs::msg::PoseStamped pose_target;
+                tf_buffer_->transform(pose_cam, pose_target, target_frame_,
+                    tf2::durationFromSec(1.0));
+                grasp_pub_->publish(pose_target);
+                RCLCPP_INFO(this->get_logger(), "已发布 /detect/grasp_pose (frame: %s)",
+                    target_frame_.c_str());
+            } catch (const tf2::TransformException& ex) {
+                // tf2 变换失败时直接发布相机坐标系下的结果
+                RCLCPP_WARN(this->get_logger(), "tf2变换失败: %s，发布相机坐标系结果", ex.what());
+                grasp_pub_->publish(pose_cam);
+            }
+
             // 保存结果
             cv::Mat vis_bgr;
             cv::cvtColor(fp.color_rgb, vis_bgr, cv::COLOR_RGB2BGR);
             cv::rectangle(vis_bgr, best.bbox, {0,255,0}, 2);
             drawPoseText(vis_bgr, pose);
+            drawAxes(vis_bgr, pose, K_);
             std::string save_path = savePoseImage(vis_bgr, results_dir_);
 
             auto t_end = std::chrono::steady_clock::now();
