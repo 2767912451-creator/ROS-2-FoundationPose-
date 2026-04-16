@@ -6,6 +6,7 @@
 |------------|------|
 | `estimater.py` | FoundationPose 核心算法，包含 `FoundationPose`、`ScorePredictor`、`PoseRefinePredictor` 类 |
 | `Utils.py` | 通用工具函数库，渲染、点云、坐标变换等，被 `estimater.py` 依赖 |
+| `datareader.py` | 数据集读取器，支持 YCB-V、LINEMOD、T-LESS 等多种 BOP 格式数据集 |
 | `mycpp.cpython-39-x86_64-linux-gnu.so` | mycpp 编译产物，供 `estimater.py` 调用（`cluster_poses` 等函数） |
 | `requirements.txt` | Python 依赖列表 |
 | `.gitignore` | Git 忽略配置 |
@@ -22,7 +23,7 @@
 | `bundlesdf/` | 包含 `mycuda` CUDA 扩展，被 `Utils.py` 依赖，不可删除 |
 | `mycpp/` | `mycpp.so` 的 C++ 源码和 CMake 构建文件 |
 | `weights/` | FoundationPose 预训练模型权重，节点启动时加载，不可删除 |
-| `demo_data/` | CAD 模型文件，包含 `水杯.obj` |
+| `demo_data/` | CAD 模型文件，包含 `水杯.obj`、`水杯.STL`、`cube.obj` 以及测试序列 |
 | `debug/` | 运行时调试输出，自动生成 |
 
 ---
@@ -42,7 +43,7 @@ ROS 2 节点，实现"触发一次 → 估计位姿 → 发布结果"的完整�
 | `srv/TriggerPoseEstimation.srv` | ROS 2 服务定义，请求为空，响应包含 4x4 位姿矩阵 |
 | `models/` | YOLO 模型文件（best.onnx、best.pt） |
 | `results/` | 每次估计后保存的可视化结果图 |
-| `CMakeLists.txt` | CMake 构建配置，需按实际路径修改 ORT_DIR、CONDA_ENV |
+| `CMakeLists.txt` | CMake 构建配置，需按实际路径修改 `ORT_DIR`、`CONDA_ENV` |
 | `package.xml` | ROS 2 包依赖声明 |
 | `run.sh` | 启动节点的脚本（用干净环境绕过 conda 库污染问题） |
 | `trigger.sh` | 发送触发信号的快捷脚本 |

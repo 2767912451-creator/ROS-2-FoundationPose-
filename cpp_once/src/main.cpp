@@ -20,7 +20,9 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <Python.h>
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
@@ -34,6 +36,48 @@
 #include <memory>
 
 namespace fs = std::filesystem;
+
+// ── Python 嵌入：渲染模型叠加到原图 ──────────────────────────────────────────
+static cv::Mat callRenderOverlay(
+    PyObject* py_est,
+    const cv::Mat& color_rgb,
+    const cv::Mat& pose_4x4,
+    const cv::Mat& K,
+    PyObject* py_glctx)
+{
+    int H = color_rgb.rows, W = color_rgb.cols;
+    npy_intp dims_c[3] = {H, W, 3};
+    PyObject* np_color = PyArray_SimpleNewFromData(3, dims_c, NPY_UINT8, (void*)color_rgb.data);
+    npy_intp dims_p[2] = {4, 4};
+    PyObject* np_pose = PyArray_SimpleNewFromData(2, dims_p, NPY_DOUBLE, (void*)pose_4x4.data);
+    npy_intp dims_k[2] = {3, 3};
+    PyObject* np_K = PyArray_SimpleNewFromData(2, dims_k, NPY_DOUBLE, (void*)K.data);
+
+    PyObject* fn = PyObject_GetAttrString(PyImport_AddModule("__main__"), "render_overlay");
+    if (!fn) { PyErr_Print(); Py_DECREF(np_color); Py_DECREF(np_pose); Py_DECREF(np_K); return {}; }
+
+    PyObject* args = PyTuple_Pack(7,
+        py_est, np_color, np_pose, np_K,
+        PyLong_FromLong(H), PyLong_FromLong(W), py_glctx);
+    PyObject* result = PyObject_CallObject(fn, args);
+    Py_DECREF(fn); Py_DECREF(args);
+    Py_DECREF(np_color); Py_DECREF(np_pose); Py_DECREF(np_K);
+
+    if (!result) { PyErr_Print(); return {}; }
+
+    PyObject* cont = PyArray_FROM_OTF(result, NPY_UINT8, NPY_ARRAY_IN_ARRAY | NPY_ARRAY_C_CONTIGUOUS);
+    Py_DECREF(result);
+    if (!cont) { PyErr_Print(); return {}; }
+
+    uint8_t* src = (uint8_t*)PyArray_DATA((PyArrayObject*)cont);
+    cv::Mat overlay_rgb(H, W, CV_8UC3);
+    std::memcpy(overlay_rgb.data, src, H * W * 3);
+    Py_DECREF(cont);
+
+    cv::Mat overlay_bgr;
+    cv::cvtColor(overlay_rgb, overlay_bgr, cv::COLOR_RGB2BGR);
+    return overlay_bgr;
+}
 
 // ── Python 嵌入：调用 FoundationPose register ─────────────────────────────────
 static cv::Mat callFoundationPoseRegister(
@@ -105,6 +149,7 @@ private:
     std::unique_ptr<YoloSeg> yolo_;
     std::unique_ptr<RealSenseCam> cam_;
     PyObject* py_est_;
+    PyObject* py_glctx_;
     cv::Mat K_;
     float depth_scale_;
     int est_refine_iter_;
@@ -117,11 +162,12 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr grasp_pub_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_pub_;
     std::string camera_frame_;
     std::string target_frame_;
 
 public:
-    PoseEstimationNode() : Node("pose_estimation_node"), py_est_(nullptr) {
+    PoseEstimationNode() : Node("pose_estimation_node"), py_est_(nullptr), py_glctx_(nullptr) {
         // 声明参数
         this->declare_parameter("mesh_file", "../demo_data/水杯.obj");
         this->declare_parameter("onnx_file", "models/best.onnx");
@@ -151,6 +197,15 @@ public:
             "/detect/grasp_pose", 10);
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
+        // 发布静态 TF：world → camera_color_optical_frame（单位变换，让 Foxglove 能识别坐标系）
+        static_tf_pub_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+        geometry_msgs::msg::TransformStamped static_tf;
+        static_tf.header.stamp = this->now();
+        static_tf.header.frame_id = "world";
+        static_tf.child_frame_id = camera_frame_;
+        static_tf.transform.rotation.w = 1.0;
+        static_tf_pub_->sendTransform(static_tf);
 
         fs::create_directories(results_dir_);
         fs::create_directories(debug_dir_);
@@ -198,6 +253,23 @@ est = FoundationPose(
     debug_dir=')" + debug_dir_ + R"(',
     debug=1, glctx=glctx)
 print('[Python] FoundationPose 初始化完成')
+
+def render_overlay(est, rgb, pose, K, H, W, glctx, alpha=0.6):
+    import torch, numpy as np
+    from Utils import nvdiffrast_render
+    ob_in_cam = torch.as_tensor(pose, dtype=torch.float, device='cuda').reshape(1,4,4)
+    tf_center = est.get_tf_to_centered_mesh().inverse()
+    ob_in_cam = ob_in_cam @ tf_center.reshape(1,4,4)
+    rendered = nvdiffrast_render(
+        K=K, H=H, W=W,
+        ob_in_cams=ob_in_cam,
+        glctx=glctx,
+        mesh_tensors=est.mesh_tensors,
+        use_light=True)[0]
+    rendered_np = (rendered.cpu().numpy() * 255).clip(0,255).astype(np.uint8)
+    mask = (rendered_np.sum(axis=-1) > 0)[..., None]
+    overlay = np.where(mask, (alpha * rendered_np + (1-alpha) * rgb).astype(np.uint8), rgb)
+    return overlay
 )";
 
         if (PyRun_SimpleString(init_script.c_str()) != 0) {
@@ -210,6 +282,11 @@ print('[Python] FoundationPose 初始化完成')
         if (!py_est_) {
             PyErr_Print();
             throw std::runtime_error("Failed to get est object");
+        }
+        py_glctx_ = PyObject_GetAttrString(main_mod, "glctx");
+        if (!py_glctx_) {
+            PyErr_Print();
+            throw std::runtime_error("Failed to get glctx object");
         }
 
         Py_DECREF(py_module);
@@ -244,6 +321,7 @@ print('[Python] FoundationPose 初始化完成')
 
     ~PoseEstimationNode() {
         if (py_est_) Py_DECREF(py_est_);
+        if (py_glctx_) Py_DECREF(py_glctx_);
         Py_Finalize();
     }
 
@@ -369,9 +447,14 @@ private:
                 grasp_pub_->publish(pose_cam);
             }
 
-            // 保存结果
+            // 保存结果：渲染模型叠加 + 坐标轴
             cv::Mat vis_bgr;
-            cv::cvtColor(fp.color_rgb, vis_bgr, cv::COLOR_RGB2BGR);
+            cv::Mat overlay = callRenderOverlay(py_est_, fp.color_rgb, pose, K_, py_glctx_);
+            if (!overlay.empty()) {
+                vis_bgr = overlay;
+            } else {
+                cv::cvtColor(fp.color_rgb, vis_bgr, cv::COLOR_RGB2BGR);
+            }
             cv::rectangle(vis_bgr, best.bbox, {0,255,0}, 2);
             drawPoseText(vis_bgr, pose);
             drawAxes(vis_bgr, pose, K_);
